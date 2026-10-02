@@ -758,7 +758,13 @@ window.saveQuote=async id=>{const trip=state.trips.find(t=>t.id===id);if(!trip)r
   if(prices.length){const items=prices.map((x,i)=>({quote_id:quoteId,passenger_id:x.passenger_id,description:trip.passengers[i]?.name||'Passenger',item_type:'passenger',amount:x.amount}));const {error}=await sb.from('quote_items').insert(items);if(error){showToast(error.message);return}}
   await sb.from('trips').update({status:'quote',updated_at:new Date().toISOString()}).eq('id',id);
   await insertTripMessage(id,`Your ZCO quotation is ready. ${loyalty.discount?loyalty.tier+' loyalty discount of '+loyalty.discount+'% has been applied. ':''}Total: ${money(total,currency)}.`,'admin');
-  await loadTripsFromSupabase();state.activeTrip=id;renderAdmin();showToast('Quotation saved and sent to the customer portal.');
+  let quoteEmailError=null;
+  try{
+    const {error}=await sb.functions.invoke('send-zco-email',{body:{event:'quote_ready',tripId:id,tripReference:trip.ref||trip.reference||id}});
+    quoteEmailError=error||null;
+  }catch(err){quoteEmailError=err}
+  await loadTripsFromSupabase();state.activeTrip=id;renderAdmin();
+  showToast(quoteEmailError?'Quotation saved in the customer portal. Customer email could not be sent yet.':'Quotation saved and customer email sent.');
 };
 async function recalculateCustomerLoyalty(userId){const {data,error}=await sb.from('trips').select('paid_amount,status').eq('user_id',userId);if(error)return;const completed=(data||[]).filter(x=>x.status==='completed'),spend=completed.reduce((s,x)=>s+Number(x.paid_amount||0),0);await sb.from('profiles').update({completed_trips:completed.length,lifetime_paid:spend,updated_at:new Date().toISOString()}).eq('id',userId)}
 window.saveStatus=async id=>{const trip=state.trips.find(t=>t.id===id);if(!trip)return;const status=$('#adminStatusSelect').value,paidAmount=Number($('#adminPaidAmount')?.value||0),paidCurrency=$('#adminPaidCurrency')?.value||'USD',locked=['accepted','arranging','ready','completed'].includes(status);const {error}=await sb.from('trips').update({status,paid_amount:paidAmount,paid_currency:paidCurrency,client_can_edit:!locked,updated_at:new Date().toISOString()}).eq('id',id);if(error){showToast('Status could not be saved: '+error.message);return}await recalculateCustomerLoyalty(trip.userId);await loadTripsFromSupabase();state.activeTrip=id;renderAdmin();showToast('Status and payment saved.')};
